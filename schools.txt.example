@@ -1,0 +1,17 @@
+# LSAC Status Checker Links
+# Copy this file to schools.txt and add your school status links
+#
+# Get these links from:
+# - Emails from law schools (look for "Check Application Status")
+# - Law school admissions portals
+# - LSAC emails
+#
+# Format options (you can mix and match):
+# Option 1: Just the link
+# https://aso.lsac-unite.org/?guid=YOUR_GUID_HERE
+# Option 2: School name on one line, link on next line
+# Harvard Law School
+# https://aso.lsac-unite.org/?guid=YOUR_GUID_HERE
+# Option 3: School name | link (on same line, separated by pipe)
+# Yale Law School | https://aso.lsac-unite.org/?guid=YOUR_GUID_HERE
+# Add your schools below:

@@ -1,0 +1,76 @@
+# Credentials and secrets
+.env
+*.env
+
+# Authentication tokens and history
+token.json
+status_history.json
+
+# School configuration (may contain personal info)
+schools.txt
+
+# Logs
+*.log
+lsac.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Playwright
+.playwright/
+
+# Screenshots (debug)
+*.png
+debug_screenshot.png
+error_page_screenshot.png
+login_page_screenshot.png
+lsac_dashboard.png
+after_click_screenshot.png
+current_state.png
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+Thumbs.db
+Desktop.ini
