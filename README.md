@@ -73,7 +73,7 @@ Automatically check your law school application statuses without logging into mu
    https://aso.lsac-unite.org/?guid=xjQd2C0H4WM%3d
    
    # Option 2: School name on line above link
-   Harvard Law School
+   Cooley Law School
    https://aso.lsac-unite.org/?guid=abc123
    
    # Option 3: School name | link (same line)
@@ -110,10 +110,10 @@ python lsac_checker.py
 
 ✅ Loaded saved authentication token
 
-Fetching status for Harvard Law School...
+Fetching status for Cooley Law School...
 
 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 
-🎉 CHANGES DETECTED FOR HARVARD LAW SCHOOL!
+🎉 CHANGES DETECTED FOR COOLEY LAW SCHOOL!
 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 
 
 📊 Status Update - Fall 2026 Full Time JD
@@ -123,7 +123,7 @@ Fetching status for Harvard Law School...
 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 
 
 ======================================================================
-📍 Harvard Law School
+📍 Cooley Law School
 ======================================================================
 
 📋 Applicant: John Doe
@@ -137,7 +137,7 @@ Fetching status for Harvard Law School...
 📊 Status: Admitted
 
 💬 Message:
-   Congratulations! You have been admitted to Harvard Law School...
+   Congratulations! You have been admitted to Cooley Law School...
 
 ✓ Checklist:
   ✅ Personal Statement

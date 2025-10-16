@@ -45,7 +45,7 @@ class LSACChecker:
         https://aso.lsac-unite.org/?guid=xjQd2C0H4WM%3d
         
         Option 2 - School name, then link:
-        Harvard Law School
+        Cooley Law School
         https://aso.lsac-unite.org/?guid=abc123
         
         Option 3 - School name with pipe separator:
@@ -118,7 +118,7 @@ class LSACChecker:
             print('  2. School name on one line, link on next')
             print('  3. School name | link (on same line)')
             print('\nExample:')
-            print('Harvard Law School')
+            print('Cooley Law School')
             print('https://aso.lsac-unite.org/?guid=abc123')
             print()
             print('Yale Law School | https://aso.lsac-unite.org/?guid=def456')
