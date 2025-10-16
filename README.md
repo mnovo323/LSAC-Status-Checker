@@ -233,6 +233,8 @@ MIT License - See LICENSE file for details
 
 This tool is not affiliated with or endorsed by LSAC. Use responsibly and in accordance with LSAC's terms of service. Automated access may be against their ToS - use at your own risk.
 
+Also, I will probably not be maintaining this at all lol. If it breaks, fix it and let me know.
+
 ## Support
 
 Having issues? 
@@ -244,6 +246,8 @@ Having issues?
 ## Acknowledgments
 
 Built by law school applicants, for law school applicants. Good luck with your applications! 🎓⚖️
+
+Inspired by LSD.law
 
 ---
 
