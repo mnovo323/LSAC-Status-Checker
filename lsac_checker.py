@@ -23,6 +23,7 @@ from playwright.async_api import async_playwright
 import requests
 from dotenv import load_dotenv
 import os
+import base64
 
 # Load environment variables from .env file
 load_dotenv()
@@ -276,23 +277,56 @@ class LSACChecker:
                     print(f"   Amount: ${amount:,.2f}")
         
         print('\n' + '='*70 + '\n')
-    
+
     def save_token(self):
-        """Save token to file"""
+        """Save token to file with expiration info"""
+        # Decode JWT to get expiration
+        try:
+            parts = self.token.split('.')
+            payload = parts[1]
+            payload += '=' * (4 - len(payload) % 4)
+            decoded = base64.b64decode(payload)
+            token_data = json.loads(decoded)
+            expires_at = token_data.get('exp')
+        except:
+            # If we can't decode, assume 24 hours from now
+            expires_at = int((datetime.now().timestamp())) + (24 * 60 * 60)
+        
         with open('token.json', 'w') as f:
-            json.dump({'token': self.token, 'guid': self.guid}, f)
-    
+            json.dump({
+                'token': self.token,
+                'guid': self.guid,
+                'expires_at': expires_at
+            }, f)
+
     def load_token(self):
-        """Load token from file"""
+        """Load token from file and check if expired"""
         try:
             with open('token.json', 'r') as f:
                 data = json.load(f)
+            
+            # Check if token is expired
+            expires_at = data.get('expires_at', 0)
+            current_time = int(datetime.now().timestamp())
+            
+            if current_time >= expires_at:
+                print('⚠️  Saved token has expired, need to re-authenticate\n')
+                return False
+            
+            # Calculate time until expiration
+            time_left = expires_at - current_time
+            hours_left = time_left // 3600
+            minutes_left = (time_left % 3600) // 60
+            
             self.token = data['token']
             self.guid = data['guid']
-            print('✅ Loaded saved authentication token\n')
+            print(f'✅ Loaded saved authentication token (expires in {hours_left}h {minutes_left}m)\n')
             return True
-        except:
+        except FileNotFoundError:
             return False
+        except Exception as e:
+            print(f'⚠️  Error loading token: {e}\n')
+            return False 
     
     def save_status_history(self, school_name, data):
         """Save current status to history file"""
