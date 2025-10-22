@@ -432,6 +432,8 @@ async def main():
         await checker.login(username, password, first_guid)
         checker.save_token()
     
+    changes_log = []
+    
     # Check status for each school
     for school_name, school_guid in schools.items():
         try:
@@ -445,7 +447,12 @@ async def main():
                 print('\n' + '🚨 '*10)
                 print(f'🎉 CHANGES DETECTED FOR {school_name.upper()}!')
                 print('🚨 '*10)
-                
+
+                changes_log.append({
+                    'school': school_name,
+                    'changes': changes
+                })
+
                 for change in changes:
                     if change['type'] == 'status':
                         print(f"\n📊 Status Update - {change['program']}")
@@ -470,6 +477,18 @@ async def main():
                 print(f'❌ HTTP error for {school_name}: {e}\n')
         except Exception as e:
             print(f'❌ Error checking {school_name}: {e}\n')
+    
+    if changes_log:
+        print('Summary of Changes Detected:')
+        for entry in changes_log:
+            print(f"\n🏫 {entry['school']}:")
+            for change in entry['changes']:
+                if change['type'] == 'status':
+                    print(f"  📊 Status Change - {change['program']}: {change['old']} -> {change['new']}")
+                elif change['type'] == 'checklist':
+                    print(f"  ✅ Checklist Progress - {change['program']}: {change['items_completed']} new item(s) completed")
+    else:
+        print('No changes detected across all schools.')
     
     print('✅ Done!')
 
