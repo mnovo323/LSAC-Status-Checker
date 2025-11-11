@@ -30,13 +30,13 @@ Automatically check your law school application statuses without logging into mu
    ```
 
 3. **Create `.env` file**
-   
+
    **Linux/Mac:**
    ```bash
    echo "LSAC_USERNAME=your_username" > .env
    echo "LSAC_PASSWORD=your_password" >> .env
    ```
-   
+
    **Windows (PowerShell):**
    ```powershell
    @"
@@ -44,13 +44,13 @@ Automatically check your law school application statuses without logging into mu
    LSAC_PASSWORD=your_password
    "@ | Out-File -FilePath .env -Encoding utf8
    ```
-   
+
    **Windows (Command Prompt):**
    ```cmd
    echo LSAC_USERNAME=your_username > .env
    echo LSAC_PASSWORD=your_password >> .env
    ```
-   
+
    **Or just create the file manually:**
    - Create a new file named `.env` (note the leading dot)
    - Add these two lines:
@@ -60,25 +60,25 @@ Automatically check your law school application statuses without logging into mu
      ```
 
 4. **Create `schools.txt` file**
-   
+
    Add your school status checker links. Get these from:
    - Emails from law schools with "Check Application Status" links
    - Law school admissions portals
    - LSAC status checker emails
-   
+
    **Format options:**
-   
+
    ```txt
    # Option 1: Just paste the link
    https://aso.lsac-unite.org/?guid=xjQd2C0H4WM%3d
-   
+
    # Option 2: School name on line above link
    Cooley Law School
    https://aso.lsac-unite.org/?guid=abc123
-   
+
    # Option 3: School name | link (same line)
    Yale Law School | https://aso.lsac-unite.org/?guid=def456
-   
+
    # Mix and match any format!
    ```
 
@@ -112,15 +112,15 @@ python lsac_checker.py
 
 Fetching status for Cooley Law School...
 
-🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 
+🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨
 🎉 CHANGES DETECTED FOR COOLEY LAW SCHOOL!
-🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 
+🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨
 
 📊 Status Update - Fall 2026 Full Time JD
    Old: Application Under Review
    New: Admitted
 
-🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 
+🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨 🚨
 
 ======================================================================
 📍 Cooley Law School
@@ -157,10 +157,11 @@ Fetching status for Cooley Law School...
 
 ## Automation
 
-Set up a daily check using cron (Linux/Mac) or Task Scheduler (Windows):
+Set up a daily check using cron (Linux/Mac), Task Scheduler (Windows), or via a Lambda function in Amazon Web Services (AWS):
 
-### Linux/Mac (cron)
+### Local Automation
 
+**Linux/Mac (cron):**
 ```bash
 # Run daily at 9 AM
 0 9 * * * cd /path/to/lsac-status-checker && /usr/bin/python3 lsac_checker.py >> lsac.log 2>&1
@@ -176,9 +177,106 @@ Set up a daily check using cron (Linux/Mac) or Task Scheduler (Windows):
    - Arguments: `C:\path\to\lsac_checker.py`
    - Start in: `C:\path\to\lsac-status-checker`
 
+### AWS Lambda
+
+Deploy to AWS for automated daily checks with email notifications:
+
+```bash
+# One-time setup
+make deploy-all EMAIL=your@email.com
+
+# Update after code changes
+make update-all
+```
+
+**What you get:**
+- Automated daily checks (configurable schedule)
+- Email notifications via SNS when status changes
+- S3-based configuration (no hardcoded schools)
+- Secure credential storage in AWS Secrets Manager
+- ~$0.95/month cost ($0.55 Lambda + $0.40 Secrets Manager)
+- No local machine needed!
+
+**Setup Requirements:**
+- AWS CLI configured (`aws configure` or set up profiles)
+- Docker installed
+- `.env` file with LSAC credentials
+
+**Using AWS Profiles:**
+
+If you have multiple AWS accounts/profiles, you can specify which one to use:
+
+```bash
+# Option 1: Add to .env file (recommended)
+echo "AWS_PROFILE=myprofile" >> .env
+
+# Option 2: Pass as parameter
+make deploy-all EMAIL=your@email.com AWS_PROFILE=myprofile
+
+# Option 3: Set as environment variable
+export AWS_PROFILE=myprofile
+make deploy-all EMAIL=your@email.com
+```
+
+**Managing your configuration:**
+```bash
+# Upload/update schools.txt to S3
+make upload-schools
+
+# Update LSAC credentials (edit .env first, then run)
+make update-credentials
+```
+
+**Use S3 locally (optional):**
+Add to your `.env` file to use the same S3 bucket as Lambda:
+```
+S3_BUCKET=lsac-status-checker-config-YOUR_ACCOUNT_ID
+```
+
+This shares the same schools.txt, token, and status history between local and Lambda runs!
+
+**Security Features:**
+- Credentials stored in AWS Secrets Manager (not in code or environment variables)
+- Local runs always use `.env` file (never Secrets Manager)
+- Lambda automatically loads from Secrets Manager
+- Rotate credentials anytime with `make update-credentials`
+
+See `make help` for all commands.
+
+## Development
+
+This project uses [ruff](https://github.com/astral-sh/ruff) for linting and formatting, with [pre-commit](https://pre-commit.com/) hooks to ensure code quality.
+
+**Setup development environment:**
+```bash
+# Install dependencies (includes ruff and pre-commit)
+pip install -r requirements.txt
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+**Code quality:**
+```bash
+# Run linter (auto-fixes issues)
+ruff check --fix .
+
+# Run formatter
+ruff format .
+
+# Run pre-commit checks manually
+pre-commit run --all-files
+```
+
+Pre-commit hooks will automatically run on `git commit` to ensure:
+- Import ordering (via ruff)
+- Code style consistency
+- No trailing whitespace
+- Valid YAML/JSON files
+
 ## Files Created
 
-- `token.json` - Cached authentication token (expires after 24 hours)
+- `token.json` - Cached authentication token (expires after 24 hours, stored in Secrets Manager on AWS)
 - `status_history.json` - Previous status for change detection
 - `lsac.log` - Optional log file if you redirect output
 
@@ -237,7 +335,7 @@ Also, I will probably not be maintaining this at all lol. If it breaks, fix it a
 
 ## Support
 
-Having issues? 
+Having issues?
 
 1. Check the [Troubleshooting](#troubleshooting) section
 2. Open an issue on GitHub
