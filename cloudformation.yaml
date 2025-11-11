@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LSAC Status Checker - Automated Lambda function with SNS notifications'
+
+Parameters:
+  LSACUsername:
+    Type: String
+    Description: Your LSAC username
+    NoEcho: true
+
+  LSACPassword:
+    Type: String
+    Description: Your LSAC password
+    NoEcho: true
+
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive status notifications
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+  ScheduleExpression:
+    Type: String
+    Description: Schedule for running the checker (cron or rate expression)
+    Default: 'cron(0 14 * * ? *)'  # 9 AM EST daily
+
+  Timezone:
+    Type: String
+    Description: Timezone for browser context
+    Default: 'America/New_York'
+
+  ECRImageUri:
+    Type: String
+    Description: ECR image URI for Lambda function (format - account.dkr.ecr.region.amazonaws.com/repo:tag)
+
+Resources:
+  # Secrets Manager for LSAC credentials
+  LSACCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${AWS::StackName}-lsac-credentials'
+      Description: LSAC username and password
+      SecretString: !Sub |
+        {
+          "username": "${LSACUsername}",
+          "password": "${LSACPassword}"
+        }
+
+  # S3 Bucket for schools.txt
+  SchoolsConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-config-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+
+  # SNS Topic for notifications
+  StatusNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-notifications'
+      DisplayName: LSAC Status Notifications
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: email
+
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource: !Ref StatusNotificationTopic
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt SchoolsConfigBucket.Arn
+                  - !Sub '${SchoolsConfigBucket.Arn}/*'
+        - PolicyName: SecretsManagerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                  - 'secretsmanager:UpdateSecret'
+                Resource: !Ref LSACCredentialsSecret
+
+  # Lambda Function
+  LSACCheckerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-checker'
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ECRImageUri
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 3008
+      EphemeralStorage:
+        Size: 1024
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref StatusNotificationTopic
+          TIMEZONE: !Ref Timezone
+          S3_BUCKET: !Ref SchoolsConfigBucket
+          LSAC_CREDENTIALS_SECRET: !Ref LSACCredentialsSecret
+          PLAYWRIGHT_BROWSERS_PATH: /var/task/.playwright
+      Description: Automated LSAC status checker with change detection
+
+  # CloudWatch Log Group
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LSACCheckerFunction}'
+      RetentionInDays: 30
+
+  # EventBridge Rule for scheduled execution
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AWS::StackName}-schedule'
+      Description: Scheduled trigger for LSAC status checker
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LSACCheckerFunction.Arn
+          Id: LSACCheckerTarget
+
+  # Permission for EventBridge to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LSACCheckerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+Outputs:
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref LSACCheckerFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionName'
+
+  SNSTopicArn:
+    Description: SNS Topic ARN for notifications
+    Value: !Ref StatusNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SNSTopicArn'
+
+  S3BucketName:
+    Description: S3 bucket for schools.txt configuration
+    Value: !Ref SchoolsConfigBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-S3Bucket'
+
+  CredentialsSecretName:
+    Description: Secrets Manager secret for LSAC credentials
+    Value: !Ref LSACCredentialsSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-CredentialsSecret'
+
+  SchoolsFileLocation:
+    Description: S3 URI for schools.txt file
+    Value: !Sub 's3://${SchoolsConfigBucket}/schools.txt'
+
+  ScheduleExpression:
+    Description: Schedule expression for the checker
+    Value: !Ref ScheduleExpression
+
+  LogGroup:
+    Description: CloudWatch Log Group
+    Value: !Ref LambdaLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LogGroup'
