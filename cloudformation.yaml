@@ -20,7 +20,7 @@ Parameters:
   ScheduleExpression:
     Type: String
     Description: Schedule for running the checker (cron or rate expression)
-    Default: 'cron(0 14 * * ? *)'  # 9 AM EST daily
+    Default: 'cron(0 * * * ? *)'  # Hourly
 
   Timezone:
     Type: String

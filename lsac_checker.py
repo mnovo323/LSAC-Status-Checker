@@ -49,10 +49,12 @@ if S3_BUCKET:
     SCHOOLS_FILE = os.getenv('SCHOOLS_FILE', f's3://{S3_BUCKET}/schools.txt')
     STATUS_HISTORY_FILE = f's3://{S3_BUCKET}/status_history.json'
     TOKEN_FILE = f's3://{S3_BUCKET}/token.json'
+    EMAIL_TRACKING_FILE = f's3://{S3_BUCKET}/email_tracking.json'
 else:
     SCHOOLS_FILE = os.getenv('SCHOOLS_FILE', 'schools.txt')
     STATUS_HISTORY_FILE = 'status_history.json'
     TOKEN_FILE = 'token.json'
+    EMAIL_TRACKING_FILE = 'email_tracking.json'
 
 
 # Helper functions

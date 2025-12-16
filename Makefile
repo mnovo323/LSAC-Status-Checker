@@ -1,4 +1,4 @@
-.PHONY: setup run deploy-all update-all logs test teardown update-credentials clean help
+.PHONY: setup run deploy-all update-all update-code update-stack logs test teardown update-credentials clean help
 
 # Configuration
 AWS_REGION ?= us-east-1
@@ -77,10 +77,22 @@ deploy-all:
 	@echo "  2. View logs: make logs"
 	@echo "  3. Test: make test"
 
-update-all:
-	@echo "🔄 Updating Lambda function..."
+update-code:
+	@echo "🔄 Updating Lambda code..."
 	@$(MAKE) -s _build
 	@$(MAKE) -s _update
+	@echo "✅ Code update complete!"
+
+update-stack:
+	@echo "🔄 Updating CloudFormation stack..."
+	@$(MAKE) -s _update_cloudformation
+	@echo "✅ Stack update complete!"
+
+update-all:
+	@echo "🔄 Updating Lambda code and stack..."
+	@$(MAKE) -s _build
+	@$(MAKE) -s _update
+	@$(MAKE) -s _update_cloudformation
 	@echo "✅ Update complete!"
 
 logs:
@@ -132,6 +144,35 @@ update-credentials:
 		>/dev/null 2>&1 && \
 	echo "✅ Updated credentials in Secrets Manager"
 
+_update_cloudformation:
+	@echo "🕐 Updating CloudFormation stack..."
+	@STACK_STATUS=$$(aws cloudformation describe-stacks $(AWS_CLI_OPTS) --stack-name $(STACK_NAME) --query 'Stacks[0].StackStatus' --output text 2>/dev/null) && \
+	if [ -z "$$STACK_STATUS" ]; then \
+		echo "❌ Stack not found. Run 'make deploy-all EMAIL=your@email.com' first"; \
+		exit 1; \
+	fi && \
+	UPDATE_OUTPUT=$$(aws cloudformation update-stack $(AWS_CLI_OPTS) \
+		--stack-name $(STACK_NAME) \
+		--use-previous-template \
+		--parameters \
+			ParameterKey=ScheduleExpression,ParameterValue='cron(0 * * * ? *)' \
+			ParameterKey=LSACUsername,UsePreviousValue=true \
+			ParameterKey=LSACPassword,UsePreviousValue=true \
+			ParameterKey=NotificationEmail,UsePreviousValue=true \
+			ParameterKey=ECRImageUri,UsePreviousValue=true \
+			ParameterKey=Timezone,ParameterValue=America/New_York \
+		--capabilities CAPABILITY_NAMED_IAM \
+		--region $(AWS_REGION) 2>&1) && \
+	echo "⏳ Waiting for stack update..." && \
+	aws cloudformation wait stack-update-complete $(AWS_CLI_OPTS) --stack-name $(STACK_NAME) --region $(AWS_REGION) && \
+	echo "✅ CloudFormation stack updated" || \
+	if echo "$$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then \
+		echo "✅ CloudFormation stack already up to date"; \
+	else \
+		echo "$$UPDATE_OUTPUT"; \
+		exit 1; \
+	fi
+
 teardown:
 	@echo "⚠️  This will delete your Lambda function, S3 bucket, and all data"
 	@read -p "Are you sure? [y/N] " confirm && \
@@ -179,7 +220,7 @@ _deploy:
 			LSACPassword=$$(grep LSAC_PASSWORD .env | cut -d= -f2) \
 			NotificationEmail=$(EMAIL) \
 			ECRImageUri=$(IMAGE_URI) \
-			Timezone=$$(grep TIMEZONE .env | cut -d= -f2 || echo "America/New_York") \
+			Timezone=$$(grep TIMEZONE .env 2>/dev/null | cut -d= -f2 | grep . || echo "America/New_York") \
 		--capabilities CAPABILITY_NAMED_IAM \
 		--region $(AWS_REGION) \
 		--no-fail-on-empty-changeset >/dev/null 2>&1
@@ -188,7 +229,8 @@ _deploy:
 _update:
 	@echo "📤 Updating function code..."
 	@FUNCTION_NAME=$$(aws cloudformation describe-stacks $(AWS_CLI_OPTS) --stack-name $(STACK_NAME) --query 'Stacks[0].Outputs[?OutputKey==`FunctionName`].OutputValue' --output text 2>/dev/null) && \
-	aws lambda update-function-code $(AWS_CLI_OPTS) --function-name $$FUNCTION_NAME --image-uri $(IMAGE_URI) >/dev/null 2>&1
+	aws lambda update-function-code $(AWS_CLI_OPTS) --function-name $$FUNCTION_NAME --image-uri $(IMAGE_URI) >/dev/null 2>&1 && \
+	aws lambda wait function-updated $(AWS_CLI_OPTS) --function-name $$FUNCTION_NAME
 
 _upload-schools:
 	@if [ -f "schools.txt" ]; then \
@@ -209,7 +251,9 @@ help:
 	@echo ""
 	@echo "AWS Lambda:"
 	@echo "  make deploy-all EMAIL=you@...  Complete deployment"
-	@echo "  make update-all                Update code"
+	@echo "  make update-code               Update Lambda code only"
+	@echo "  make update-stack              Update CloudFormation stack only"
+	@echo "  make update-all                Update code and stack"
 	@echo "  make upload-schools            Upload schools.txt to S3"
 	@echo "  make update-credentials        Update LSAC credentials"
 	@echo "  make logs                      View logs"

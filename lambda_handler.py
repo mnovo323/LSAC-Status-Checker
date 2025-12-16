@@ -20,18 +20,90 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
+from zoneinfo import ZoneInfo
 
 import boto3
+from smart_open import open as smart_open
+
+from lsac_checker import EMAIL_TRACKING_FILE
+from lsac_checker import main as lsac_main
 
 # Force headless mode for Lambda environment
 os.environ['RUN_HEADLESS'] = 'true'
 
-# Import the existing checker
-from lsac_checker import main as lsac_main
-
 sns_client = boto3.client('sns')
+
+# Email tracking constants
+NO_CHANGE_EMAIL_HOUR = 9  # Only send "no changes" emails at 9am Eastern
+
+
+def load_email_tracking():
+    """Load email tracking data (last email timestamp and whether it had changes)"""
+    try:
+        with smart_open(EMAIL_TRACKING_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_email_tracking(had_changes):
+    """Save email tracking data after sending an email"""
+    tracking_data = {
+        'last_email_sent': datetime.now().isoformat(),
+        'last_email_had_changes': had_changes,
+    }
+    try:
+        with smart_open(EMAIL_TRACKING_FILE, 'w') as f:
+            json.dump(tracking_data, f, indent=2)
+    except Exception as e:
+        print(f'⚠️  Warning: Could not save email tracking to {EMAIL_TRACKING_FILE}: {e}')
+
+
+def should_send_email(has_changes):
+    """
+    Determine if an email should be sent based on:
+    - Always send if there are changes
+    - If no changes, only send during the 9am Eastern hour AND no email sent since 9am
+
+    Returns tuple: (should_send: bool, reason: str)
+    """
+    if has_changes:
+        return True, 'changes_detected'
+
+    # Only send "no changes" emails at 9am Eastern
+    tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
+    current_hour = datetime.now(tz).hour
+
+    if current_hour != NO_CHANGE_EMAIL_HOUR:
+        return False, f'no_changes_not_9am_hour_(current_hour={current_hour})'
+
+    # It's 9am - check if we already sent an email today
+    tracking = load_email_tracking()
+    last_email_sent = tracking.get('last_email_sent')
+
+    if not last_email_sent:
+        return True, 'no_changes_9am_no_previous_email'
+
+    try:
+        last_email_time = datetime.fromisoformat(last_email_sent)
+        # Make timezone-aware if not already
+        if last_email_time.tzinfo is None:
+            last_email_time = last_email_time.replace(tzinfo=tz)
+
+        # Calculate when yesterday's 9am was
+        now = datetime.now(tz)
+        today_9am = now.replace(hour=NO_CHANGE_EMAIL_HOUR, minute=0, second=0, microsecond=0)
+        yesterday_9am = today_9am - timedelta(days=1)
+
+        # Only send if no email has been sent since yesterday's 9am
+        if last_email_time < yesterday_9am:
+            return True, 'no_changes_9am_daily_update'
+        else:
+            return False, 'no_changes_9am_but_email_sent_since_yesterday_9am'
+    except Exception as e:
+        return True, f'no_changes_9am_timestamp_parse_error: {e}'
 
 
 def lambda_handler(event, context):
@@ -65,6 +137,9 @@ def lambda_handler(event, context):
         has_changes = '🚨' in output
         schools_checked = output.count('Fetching status for')
         changes_detected = output.count('CHANGES DETECTED')
+
+        # Determine if we should send an email
+        send_email, email_reason = should_send_email(has_changes)
 
         # Create dynamic subject line
         if has_changes:
@@ -100,8 +175,13 @@ Changes Detected: {changes_detected}
 Automated check from AWS Lambda
 """
 
-        # Publish to SNS
-        response = sns_client.publish(TopicArn=sns_topic_arn, Subject=subject, Message=message)
+        # Publish to SNS only if we should send an email
+        if send_email:
+            response = sns_client.publish(TopicArn=sns_topic_arn, Subject=subject, Message=message)
+            save_email_tracking(has_changes)
+            sns_message_id = response['MessageId']
+        else:
+            sns_message_id = None
 
         return {
             'statusCode': 200,
@@ -109,7 +189,9 @@ Automated check from AWS Lambda
                 {
                     'message': 'Check completed successfully',
                     'changes_detected': has_changes,
-                    'sns_message_id': response['MessageId'],
+                    'email_sent': send_email,
+                    'email_reason': email_reason,
+                    'sns_message_id': sns_message_id,
                 }
             ),
         }
