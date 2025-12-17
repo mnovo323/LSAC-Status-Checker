@@ -1,0 +1,233 @@
+"""
+AWS Lambda handler for LSAC Status Checker
+Runs the checker and sends results to SNS
+
+Environment Variables Required:
+- LSAC_USERNAME: Your LSAC username
+- LSAC_PASSWORD: Your LSAC password
+- SNS_TOPIC_ARN: ARN of the SNS topic to publish notifications
+- TIMEZONE: Optional, defaults to 'America/New_York'
+
+Lambda Configuration:
+- Runtime: Python 3.11+
+- Architecture: x86_64 (for Playwright compatibility)
+- Memory: 2048 MB (minimum for Chromium)
+- Timeout: 300 seconds (5 minutes)
+- Layer: Playwright Lambda layer (see README for setup)
+"""
+
+import asyncio
+import json
+import os
+import sys
+from datetime import datetime
+from io import StringIO
+from zoneinfo import ZoneInfo
+
+import boto3
+from smart_open import open as smart_open
+
+from lsac_checker import EMAIL_TRACKING_FILE
+from lsac_checker import main as lsac_main
+
+# Force headless mode for Lambda environment
+os.environ['RUN_HEADLESS'] = 'true'
+
+sns_client = boto3.client('sns')
+
+# Email tracking constants
+DAILY_EMAIL_HOUR = 9  # Send daily summary at 9am Eastern
+
+
+def load_email_tracking():
+    """Load email tracking data (last change timestamp)"""
+    try:
+        with smart_open(EMAIL_TRACKING_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_email_tracking(had_changes):
+    """Save email tracking data - only update last_change_detected if there were changes"""
+    tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
+    now = datetime.now(tz)
+
+    tracking = load_email_tracking()
+
+    # Always update last_email_sent
+    tracking['last_email_sent'] = now.isoformat()
+
+    # Only update last_change_detected if changes were found
+    if had_changes:
+        tracking['last_change_detected'] = now.isoformat()
+
+    try:
+        with smart_open(EMAIL_TRACKING_FILE, 'w') as f:
+            json.dump(tracking, f, indent=2)
+    except Exception as e:
+        print(f'⚠️  Warning: Could not save email tracking to {EMAIL_TRACKING_FILE}: {e}')
+
+
+def get_last_change_message():
+    """Get a human-readable message about when the last change was detected"""
+    tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
+    tracking = load_email_tracking()
+    last_change = tracking.get('last_change_detected')
+
+    if not last_change:
+        return 'No changes have been detected yet.'
+
+    try:
+        last_change_time = datetime.fromisoformat(last_change)
+        if last_change_time.tzinfo is None:
+            last_change_time = last_change_time.replace(tzinfo=tz)
+
+        # Format nicely: "Dec 15 at 3:47 PM"
+        formatted = last_change_time.strftime('%b %d at %-I:%M %p')
+        return f'No changes since {formatted}.'
+    except Exception:
+        return 'No changes have been detected yet.'
+
+
+def should_send_email(has_changes):
+    """
+    Determine if an email should be sent:
+    - Always send if there are changes (immediate notification)
+    - Always send at 9am (daily summary)
+    - Don't send at other hours if no changes
+
+    Returns tuple: (should_send: bool, reason: str)
+    """
+    if has_changes:
+        return True, 'changes_detected'
+
+    # Send daily summary at 9am Eastern
+    tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
+    current_hour = datetime.now(tz).hour
+
+    if current_hour == DAILY_EMAIL_HOUR:
+        return True, 'daily_9am_summary'
+
+    return False, f'no_changes_not_9am_(current_hour={current_hour})'
+
+
+def lambda_handler(event, context):
+    """
+    Lambda handler that runs the LSAC checker and publishes results to SNS
+
+    Returns:
+        dict: Lambda response with status code and body
+    """
+
+    sns_topic_arn = os.environ.get('SNS_TOPIC_ARN')
+
+    if not sns_topic_arn:
+        return {'statusCode': 500, 'body': json.dumps({'error': 'SNS_TOPIC_ARN environment variable not set'})}
+
+    # Capture stdout to collect the checker output
+    old_stdout = sys.stdout
+    sys.stdout = captured_output = StringIO()
+
+    try:
+        # Run the existing main function
+        asyncio.run(lsac_main())
+
+        # Get the captured output
+        output = captured_output.getvalue()
+
+        # Restore stdout
+        sys.stdout = old_stdout
+
+        # Parse output for better subject lines
+        has_changes = '🚨' in output
+        schools_checked = output.count('Fetching status for')
+        changes_detected = output.count('CHANGES DETECTED')
+
+        # Determine if we should send an email
+        send_email, email_reason = should_send_email(has_changes)
+
+        # Create dynamic subject line
+        if has_changes:
+            if changes_detected == 1:
+                # Try to extract school name
+                lines = output.split('\n')
+                school_name = None
+                for line in lines:
+                    if 'CHANGES DETECTED FOR' in line:
+                        school_name = line.split('FOR')[1].strip('!').strip()
+                        break
+
+                if school_name:
+                    subject = f'🚨 LSAC Update: {school_name}'
+                else:
+                    subject = '🚨 LSAC Status Update Detected'
+            else:
+                subject = f'🚨 LSAC Updates: {changes_detected} Schools Changed'
+        else:
+            if schools_checked > 0:
+                subject = f'✅ LSAC Check Complete ({schools_checked} Schools - No Changes)'
+            else:
+                subject = 'LSAC Status Check Complete'
+
+        # Build message with optional "no changes since" note for daily summaries
+        last_change_note = ''
+        if not has_changes:
+            last_change_note = f'\n{get_last_change_message()}\n'
+
+        message = f"""LSAC Status Check Results
+Time: {datetime.now().isoformat()}
+Schools Checked: {schools_checked}
+Changes Detected: {changes_detected}
+{last_change_note}
+{output}
+
+---
+Automated check from AWS Lambda
+"""
+
+        # Publish to SNS only if we should send an email
+        if send_email:
+            response = sns_client.publish(TopicArn=sns_topic_arn, Subject=subject, Message=message)
+            save_email_tracking(has_changes)
+            sns_message_id = response['MessageId']
+        else:
+            sns_message_id = None
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps(
+                {
+                    'message': 'Check completed successfully',
+                    'changes_detected': has_changes,
+                    'email_sent': send_email,
+                    'email_reason': email_reason,
+                    'sns_message_id': sns_message_id,
+                }
+            ),
+        }
+
+    except Exception as e:
+        # Restore stdout
+        sys.stdout = old_stdout
+        output = captured_output.getvalue()
+
+        error_message = f"""LSAC Status Check Error
+Time: {datetime.now().isoformat()}
+
+Error: {str(e)}
+
+Partial output:
+{output}
+
+---
+Automated check from AWS Lambda
+"""
+
+        # Still try to send error notification to SNS
+        try:
+            sns_client.publish(TopicArn=sns_topic_arn, Subject='❌ LSAC Status Check Error', Message=error_message)
+        except Exception:
+            pass  # If SNS fails, just log the error
+
+        return {'statusCode': 500, 'body': json.dumps({'error': str(e), 'output': output})}
