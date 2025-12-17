@@ -20,7 +20,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import StringIO
 from zoneinfo import ZoneInfo
 
@@ -36,11 +36,11 @@ os.environ['RUN_HEADLESS'] = 'true'
 sns_client = boto3.client('sns')
 
 # Email tracking constants
-NO_CHANGE_EMAIL_HOUR = 9  # Only send "no changes" emails at 9am Eastern
+DAILY_EMAIL_HOUR = 9  # Send daily summary at 9am Eastern
 
 
 def load_email_tracking():
-    """Load email tracking data (last email timestamp and whether it had changes)"""
+    """Load email tracking data (last change timestamp)"""
     try:
         with smart_open(EMAIL_TRACKING_FILE, 'r') as f:
             return json.load(f)
@@ -49,61 +49,67 @@ def load_email_tracking():
 
 
 def save_email_tracking(had_changes):
-    """Save email tracking data after sending an email"""
-    tracking_data = {
-        'last_email_sent': datetime.now().isoformat(),
-        'last_email_had_changes': had_changes,
-    }
+    """Save email tracking data - only update last_change_detected if there were changes"""
+    tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
+    now = datetime.now(tz)
+
+    tracking = load_email_tracking()
+
+    # Always update last_email_sent
+    tracking['last_email_sent'] = now.isoformat()
+
+    # Only update last_change_detected if changes were found
+    if had_changes:
+        tracking['last_change_detected'] = now.isoformat()
+
     try:
         with smart_open(EMAIL_TRACKING_FILE, 'w') as f:
-            json.dump(tracking_data, f, indent=2)
+            json.dump(tracking, f, indent=2)
     except Exception as e:
         print(f'⚠️  Warning: Could not save email tracking to {EMAIL_TRACKING_FILE}: {e}')
 
 
+def get_last_change_message():
+    """Get a human-readable message about when the last change was detected"""
+    tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
+    tracking = load_email_tracking()
+    last_change = tracking.get('last_change_detected')
+
+    if not last_change:
+        return 'No changes have been detected yet.'
+
+    try:
+        last_change_time = datetime.fromisoformat(last_change)
+        if last_change_time.tzinfo is None:
+            last_change_time = last_change_time.replace(tzinfo=tz)
+
+        # Format nicely: "Dec 15 at 3:47 PM"
+        formatted = last_change_time.strftime('%b %d at %-I:%M %p')
+        return f'No changes since {formatted}.'
+    except Exception:
+        return 'No changes have been detected yet.'
+
+
 def should_send_email(has_changes):
     """
-    Determine if an email should be sent based on:
-    - Always send if there are changes
-    - If no changes, only send during the 9am Eastern hour AND no email sent since 9am
+    Determine if an email should be sent:
+    - Always send if there are changes (immediate notification)
+    - Always send at 9am (daily summary)
+    - Don't send at other hours if no changes
 
     Returns tuple: (should_send: bool, reason: str)
     """
     if has_changes:
         return True, 'changes_detected'
 
-    # Only send "no changes" emails at 9am Eastern
+    # Send daily summary at 9am Eastern
     tz = ZoneInfo(os.environ.get('TIMEZONE', 'America/New_York'))
     current_hour = datetime.now(tz).hour
 
-    if current_hour != NO_CHANGE_EMAIL_HOUR:
-        return False, f'no_changes_not_9am_hour_(current_hour={current_hour})'
+    if current_hour == DAILY_EMAIL_HOUR:
+        return True, 'daily_9am_summary'
 
-    # It's 9am - check if we already sent an email today
-    tracking = load_email_tracking()
-    last_email_sent = tracking.get('last_email_sent')
-
-    if not last_email_sent:
-        return True, 'no_changes_9am_no_previous_email'
-
-    try:
-        last_email_time = datetime.fromisoformat(last_email_sent)
-        # Make timezone-aware if not already
-        if last_email_time.tzinfo is None:
-            last_email_time = last_email_time.replace(tzinfo=tz)
-
-        # Calculate when yesterday's 9am was
-        now = datetime.now(tz)
-        today_9am = now.replace(hour=NO_CHANGE_EMAIL_HOUR, minute=0, second=0, microsecond=0)
-        yesterday_9am = today_9am - timedelta(days=1)
-
-        # Only send if no email has been sent since yesterday's 9am
-        if last_email_time < yesterday_9am:
-            return True, 'no_changes_9am_daily_update'
-        else:
-            return False, 'no_changes_9am_but_email_sent_since_yesterday_9am'
-    except Exception as e:
-        return True, f'no_changes_9am_timestamp_parse_error: {e}'
+    return False, f'no_changes_not_9am_(current_hour={current_hour})'
 
 
 def lambda_handler(event, context):
@@ -164,11 +170,16 @@ def lambda_handler(event, context):
             else:
                 subject = 'LSAC Status Check Complete'
 
+        # Build message with optional "no changes since" note for daily summaries
+        last_change_note = ''
+        if not has_changes:
+            last_change_note = f'\n{get_last_change_message()}\n'
+
         message = f"""LSAC Status Check Results
 Time: {datetime.now().isoformat()}
 Schools Checked: {schools_checked}
 Changes Detected: {changes_detected}
-
+{last_change_note}
 {output}
 
 ---
